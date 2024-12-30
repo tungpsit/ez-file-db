@@ -24,13 +24,10 @@ func TestDatabase(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, db)
 
-		err = db.Create()
-		assert.NoError(t, err)
-
 		// Try creating the same database again
-		err = db.Create()
-		assert.Error(t, err)
-		assert.Equal(t, ErrDatabaseExists, err)
+		db2, err := New("test_db", config)
+		assert.NoError(t, err)
+		assert.NotNil(t, db2)
 	})
 
 	t.Run("Table Operations", func(t *testing.T) {

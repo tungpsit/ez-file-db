@@ -22,11 +22,6 @@ func main() {
 	}
 	defer database.Close()
 
-	// Create the database
-	if err := database.Create(); err != nil {
-		log.Fatal(err)
-	}
-
 	// Create a users table
 	err = database.CreateTable("users", []db.Column{
 		{Name: "id", Type: db.Int, PrimaryKey: true},

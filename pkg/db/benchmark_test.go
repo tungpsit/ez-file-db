@@ -22,9 +22,6 @@ func BenchmarkDatabase(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if err := database.Create(); err != nil {
-		b.Fatal(err)
-	}
 
 	// Create test table
 	err = database.CreateTable("users", []Column{
@@ -151,9 +148,7 @@ func BenchmarkDatabaseParallel(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if err := database.Create(); err != nil {
-		b.Fatal(err)
-	}
+	defer database.Close()
 
 	// Create test table
 	err = database.CreateTable("users", []Column{

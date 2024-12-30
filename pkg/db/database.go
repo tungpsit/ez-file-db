@@ -28,7 +28,6 @@ const (
 // Database represents the interface for database operations
 type Database interface {
 	// Database Management
-	Create() error
 	Drop() error
 	Close() error
 
@@ -60,7 +59,7 @@ type database struct {
 	mu      sync.RWMutex
 }
 
-// New creates a new database instance
+// New creates a new database instance or opens an existing one
 func New(name string, config Config) (Database, error) {
 	db := &database{
 		name:    name,
@@ -69,16 +68,33 @@ func New(name string, config Config) (Database, error) {
 		indexes: make(map[string]*IndexManager),
 	}
 
-	// Initialize storage
+	// Create data directory if it doesn't exist
 	dbPath := filepath.Join(config.DataDir, name)
+	if err := os.MkdirAll(dbPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	// Initialize storage
 	storage, err := storage.NewFileStorage(dbPath, config.MaxFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
 	db.storage = storage
 
-	// Only try to load tables if the database exists
-	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+	// Check if database exists
+	schemaPath := filepath.Join(dbPath, schemaTableName)
+	exists := true
+	if _, err := os.Stat(schemaPath); os.IsNotExist(err) {
+		exists = false
+	}
+
+	if !exists {
+		// Initialize new database
+		if err := db.initializeDatabase(); err != nil {
+			return nil, fmt.Errorf("failed to initialize database: %w", err)
+		}
+	} else {
+		// Load existing database
 		if err := db.loadTables(); err != nil {
 			return nil, fmt.Errorf("failed to load tables: %w", err)
 		}
@@ -87,23 +103,10 @@ func New(name string, config Config) (Database, error) {
 	return db, nil
 }
 
-// Create implements Database.Create
-func (db *database) Create() error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	dbPath := filepath.Join(db.config.DataDir, db.name)
-	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
-		return ErrDatabaseExists
-	}
-
-	// Create database directory
-	if err := os.MkdirAll(dbPath, 0755); err != nil {
-		return fmt.Errorf("failed to create database directory: %w", err)
-	}
-
+// initializeDatabase initializes a new database with schema table
+func (db *database) initializeDatabase() error {
 	// Create schema table directory
-	schemaPath := filepath.Join(dbPath, schemaTableName)
+	schemaPath := filepath.Join(db.config.DataDir, db.name, schemaTableName)
 	if err := os.MkdirAll(schemaPath, 0755); err != nil {
 		return fmt.Errorf("failed to create schema directory: %w", err)
 	}
