@@ -105,6 +105,7 @@ func NewIndexManager() *IndexManager {
 			index   *MemoryIndex
 			columns []string
 		}),
+		mu: sync.RWMutex{},
 	}
 }
 
@@ -125,6 +126,14 @@ func (im *IndexManager) CreateIndex(name string, columns []string) error {
 		columns: columns,
 	}
 	return nil
+}
+
+// CreateIndexIfNotExists creates a new index for the specified column if it doesn't exist
+func (im *IndexManager) CreateIndexIfNotExists(name string, columns []string) error {
+	if im.HasIndex(name) {
+		return nil
+	}
+	return im.CreateIndex(name, columns)
 }
 
 // DropIndex drops the index for the specified column

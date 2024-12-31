@@ -36,6 +36,7 @@ type Database interface {
 	DropTable(name string) error
 	GetTable(name string) (*Table, error)
 	ListTables() ([]string, error)
+	HasTable(name string) bool
 
 	// Index Operations
 	CreateIndex(table string, options CreateIndexOptions) error
@@ -94,10 +95,7 @@ func New(name string, config Config) (Database, error) {
 			return nil, fmt.Errorf("failed to initialize database: %w", err)
 		}
 	} else {
-		// Load existing database
-		if err := db.loadTables(); err != nil {
-			return nil, fmt.Errorf("failed to load tables: %w", err)
-		}
+		// TODO: Load existing database
 	}
 
 	return db, nil
@@ -283,6 +281,15 @@ func (db *database) ListTables() ([]string, error) {
 		tables = append(tables, name)
 	}
 	return tables, nil
+}
+
+// HasTable implements Database.HasTable
+func (db *database) HasTable(name string) bool {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	_, exists := db.tables[name]
+	return exists
 }
 
 // Insert implements Database.Insert
@@ -512,7 +519,9 @@ func (db *database) Query(tableName string, columns []string, where map[string]i
 	var count int
 
 	err := db.storage.Scan(tableName, func(record *storage.Record) error {
-		if matchesWhere(record.Data, where) {
+		data := transformDataType(db.tables[tableName].Columns, record.Data)
+
+		if matchesWhere(data, where) {
 			if currentOffset < offset {
 				currentOffset++
 				return nil
@@ -522,7 +531,7 @@ func (db *database) Query(tableName string, columns []string, where map[string]i
 				return nil
 			}
 
-			result := projectColumns(record.Data, columns)
+			result := projectColumns(data, columns)
 			results = append(results, result)
 			count++
 		}
@@ -553,6 +562,24 @@ func projectColumns(data map[string]interface{}, columns []string) map[string]in
 		}
 	}
 	return result
+}
+
+// transformDataType transforms the data type of the value
+func transformDataType(columns []Column, data map[string]interface{}) map[string]interface{} {
+	for _, col := range columns {
+		if value, exists := data[col.Name]; exists {
+			data[col.Name] = transformValue(value, col.Type)
+		}
+	}
+	return data
+}
+
+func transformValue(value interface{}, dataType DataType) interface{} {
+	switch dataType {
+	case Int:
+		return int(value.(float64))
+	}
+	return value
 }
 
 // matchesWhere checks if a record matches the where conditions
@@ -666,33 +693,6 @@ func (db *database) DropTable(name string) error {
 	return nil
 }
 
-// loadTables loads all table schemas from storage
-func (db *database) loadTables() error {
-	return db.storage.Scan(schemaTableName, func(record *storage.Record) error {
-		schemaStr, ok := record.Data["schema"].(string)
-		if !ok {
-			return fmt.Errorf("invalid schema data for table %v", record.ID)
-		}
-
-		var schema tableSchema
-		if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
-			return fmt.Errorf("failed to unmarshal schema: %w", err)
-		}
-
-		table := &Table{
-			Name:        schema.Name,
-			Columns:     schema.Columns,
-			PrimaryKey:  schema.PrimaryKey,
-			CreatedAt:   schema.CreatedAt,
-			UpdatedAt:   schema.UpdatedAt,
-			MaxFileSize: schema.MaxFileSize,
-		}
-
-		db.tables[schema.Name] = table
-		return nil
-	})
-}
-
 // CreateIndex implements Database.CreateIndex
 func (db *database) CreateIndex(table string, options CreateIndexOptions) error {
 	db.mu.Lock()
@@ -739,7 +739,8 @@ func (db *database) CreateIndex(table string, options CreateIndexOptions) error 
 
 	// Build index data
 	err := db.storage.Scan(table, func(record *storage.Record) error {
-		return indexManager.IndexRecord(record.Data)
+		data := transformDataType(db.tables[table].Columns, record.Data)
+		return indexManager.IndexRecord(data)
 	})
 	if err != nil {
 		// Rollback index creation
@@ -800,6 +801,15 @@ func (db *database) ListIndexes(table string) ([]IndexInfo, error) {
 	indexes := make([]IndexInfo, len(t.Indexes))
 	copy(indexes, t.Indexes)
 	return indexes, nil
+}
+
+// HasIndex implements Database.HasIndex
+func (db *database) HasIndex(table, indexName string) bool {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	_, exists := db.indexes[table]
+	return exists
 }
 
 // updateTableSchema updates the persisted table schema
